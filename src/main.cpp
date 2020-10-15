@@ -80,6 +80,7 @@ int main() {
           // Previous path data given to the Planner
           auto previous_path_x = j[1]["previous_path_x"];
           auto previous_path_y = j[1]["previous_path_y"];
+          
           // Previous path's end s and d values 
           double end_path_s = j[1]["end_path_s"];
           double end_path_d = j[1]["end_path_d"];
@@ -100,6 +101,9 @@ int main() {
 
           double pos_x;
           double pos_y;
+          double pos_s;
+          double pos_d;
+          vector<double> pos_frenet;
           double angle;
           int path_size = previous_path_x.size();
 
@@ -111,6 +115,8 @@ int main() {
           if (path_size == 0) {
             pos_x = car_x;
             pos_y = car_y;
+            pos_s = car_s;
+            pos_d = car_d;
             angle = deg2rad(car_yaw);
           } else {
             pos_x = previous_path_x[path_size-1];
@@ -119,17 +125,21 @@ int main() {
             double pos_x2 = previous_path_x[path_size-2];
             double pos_y2 = previous_path_y[path_size-2];
             angle = atan2(pos_y-pos_y2,pos_x-pos_x2);
+
+            pos_frenet = getFrenet(pos_x, pos_y, angle, map_waypoints_x, map_waypoints_y);
+            pos_s = pos_frenet[0];
+            pos_d = pos_frenet[1];
           }
+
 
           double dist_inc = 0.5;
-          for (int i = 0; i < 50-path_size; ++i) {    
-            next_x_vals.push_back(pos_x+(dist_inc)*cos(angle+(i+1)*(pi()/100)));
-            next_y_vals.push_back(pos_y+(dist_inc)*sin(angle+(i+1)*(pi()/100)));
-            pos_x += (dist_inc)*cos(angle+(i+1)*(pi()/100));
-            pos_y += (dist_inc)*sin(angle+(i+1)*(pi()/100));
+          for (int i = 0; i < 50-path_size; ++i) {  
+            pos_s += dist_inc * i;
+
+            vector<double> pos_xy = getXY(pos_s, pos_d, map_waypoints_s, map_waypoints_x, map_waypoints_y); 
+            next_x_vals.push_back(pos_xy[0]);
+            next_y_vals.push_back(pos_xy[1]);
           }
-
-
 
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
