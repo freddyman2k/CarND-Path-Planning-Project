@@ -154,5 +154,27 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s,
   return {x,y};
 }
 
+// Transform from global x,y coordinates to car x,y coordinates (car at (0,0) with angle 0)
+// x_ref, y_ref, angle_ref: the car's position and heading in the global coord. system
+// x,y: Point (in global coordinates) to transform
+vector<double> toCarCoord(double x_ref, double y_ref, double angle_ref, 
+                          double x, double y) {
+  double x_shift = x - x_ref;
+  double y_shift = y - y_ref;
+
+  double x_in_car = (x_shift*cos(0-angle_ref) - y_shift*sin(0-angle_ref));
+  double y_in_car = (x_shift*sin(0-angle_ref) + y_shift*cos(0-angle_ref));
+
+  return {x_in_car, y_in_car};
+}
+
+// Transform from car x,y coordinates to global x,y coordinates (car at (0,0) with angle 0)
+// angle_ref: Car's angle in global coordinate system
+vector<double> carToGlobalCoord(double angle_ref, double x_car, double y_car) {
+  double x_global = (x_car*cos(angle_ref) - y_car*sin(angle_ref));
+  double y_global = (x_car*sin(angle_ref) + y_car*cos(angle_ref));
+
+  return {x_global, y_global};
+}
 
 #endif  // HELPERS_H
