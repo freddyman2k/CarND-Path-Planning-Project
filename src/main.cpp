@@ -2,12 +2,14 @@
 #include <fstream>
 #include <iostream>
 #include <string>
-#include <vector>
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
+#include <vector>
 #include "helpers.h"
 #include "json.hpp"
 #include "spline.h"
+
+#define V_GOAL 49.5
 
 // for convenience
 using nlohmann::json;
@@ -26,7 +28,7 @@ int main() {
 
   int lane = 1;
 
-  double v_target = 49.5;
+  double v_target = 0.0;
 
   // Waypoint map to read from
   string map_file_ = "../data/highway_map.csv";
@@ -112,17 +114,13 @@ int main() {
           double pos_angle;
           int path_size = previous_path_x.size();
 
-          // If there are unprocessed / old path points, we will use these 
-          // to begin the next planned path. This will yield a smooth transition.
-
-          for (int i = 0; i < path_size; ++i) {
-            next_x_vals.push_back(previous_path_x[i]);
-            next_y_vals.push_back(previous_path_y[i]);
-          }
+          // The x and y vectors of points the path spline will be calculated from
+          vector<double> spline_points_x;
+          vector<double> spline_points_y;
 
           // Depending on whether there was a previously unprocessed path, we need 
           // to define the x, y and angle values we will work with in the next step
-          if (path_size == 0) {
+          if (path_size < 2) {
             // If there was no previous path, the values are initialized with
             // the car's localization data
             pos_x = car_x;
@@ -130,6 +128,17 @@ int main() {
             pos_s = car_s;
             pos_d = car_d;
             pos_angle = deg2rad(car_yaw);
+
+            // Also, initalize the path with 2 "fake" points
+            // creating a path tangent to the car
+            double prev_car_x = car_x - cos(car_yaw);
+            double prev_car_y = car_y - sin(car_yaw);
+
+            spline_points_x.push_back(prev_car_x);
+            spline_points_x.push_back(car_x);
+
+            spline_points_y.push_back(prev_car_y);
+            spline_points_y.push_back(car_y);
           } else {
             // If there was indeed a path that can be continued, initialize
             // the values with the last values on that path
@@ -140,49 +149,50 @@ int main() {
             double pos_y_prev = previous_path_y[path_size-2];
             pos_angle = atan2(pos_y-pos_y_prev,pos_x-pos_x_prev);
 
+            // Make the path tangent to the previous path's end points
+            spline_points_x.push_back(pos_x_prev);
+            spline_points_x.push_back(pos_x);
+
+            spline_points_y.push_back(pos_y_prev);
+            spline_points_y.push_back(pos_y);
+
             pos_frenet = getFrenet(pos_x, pos_y, pos_angle, map_waypoints_x, map_waypoints_y);
             pos_s = pos_frenet[0];
             pos_d = pos_frenet[1];
-          }          
-
-          // 
-          vector<double> next_waypoints_x_vals;
-          vector<double> next_waypoints_y_vals;
-
-          // If there are unprocessed / old path points, we will use these 
-          // in the spline to get a smooth transition
-          if (path_size != 0) {
-            for (int i = 0; i < path_size; ++i) {
-              next_waypoints_x_vals.push_back(next_x_vals[i]);
-              next_waypoints_y_vals.push_back(next_y_vals[i]);
-            }
           }
 
           // The spline should also include some future points.
           // Here, we use evenly spaced (30m apart) points along the road
-          for (int i = 0; i < 4; ++i) {
-            vector<double> waypoint_pos_xy = getXY(pos_s + 30.0*(i+1), (2 + 4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-            next_waypoints_x_vals.push_back(waypoint_pos_xy[0]);
-            next_waypoints_y_vals.push_back(waypoint_pos_xy[1]);
+          for (int i = 1; i < 4; ++i) {
+            vector<double> waypoint_pos_xy = getXY(car_s + 30.0*i, (2 + 4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            spline_points_x.push_back(waypoint_pos_xy[0]);
+            spline_points_y.push_back(waypoint_pos_xy[1]);
           }
 
           // Convert the x and y values of the waypoints into the car coordinates
           // (car at (0,0)). This makes the interpolation easier in a future step.
-          for (int i = 0; i < next_waypoints_x_vals.size(); ++i) {
+          for (int i = 0; i < spline_points_x.size(); ++i) {
             vector<double> xy_in_car_coord = toCarCoord(pos_x, pos_y, 
                                                         pos_angle, 
-                                                        next_waypoints_x_vals[i], 
-                                                        next_waypoints_y_vals[i]);
+                                                        spline_points_x[i], 
+                                                        spline_points_y[i]);
 
-            next_waypoints_x_vals[i] = xy_in_car_coord[0];
-            next_waypoints_y_vals[i] = xy_in_car_coord[1];
+            spline_points_x[i] = xy_in_car_coord[0];
+            spline_points_y[i] = xy_in_car_coord[1];
           }
 
           // Set up the spline function with the previously added points
           // (the old path points and the calculated future positions)
           tk::spline s;
-          s.set_points(next_waypoints_x_vals, next_waypoints_y_vals);
+          s.set_points(spline_points_x, spline_points_y);     
 
+          // If there are unprocessed / old path points, we will use these 
+          // to begin the next planned path. This will yield a smooth transition.
+
+          for (int i = 0; i < path_size; ++i) {
+            next_x_vals.push_back(previous_path_x[i]);
+            next_y_vals.push_back(previous_path_y[i]);
+          }
 
           // Use the spline to interpolate points: 
           // The points should be spaced in such a way that the car's velocity
@@ -190,17 +200,27 @@ int main() {
           double target_x = 30.0; // Our path will "look ahead" in this distance
           double target_y = s(target_x);
           double target_dist = distance(target_x, target_y, 0.0, 0.0);
+          double x_len = target_x;
           double N = target_dist / (0.02 * v_target/2.237);
-          for (int i = 1; i < 50-path_size; ++i) {
-            double x_point = i * target_x/N;
-            double y_point = s(x_point);
-            
+          double x_point = 0.0;
+          double y_point = 0.0;
+          for (int i = 1; i <= 50-path_size; ++i) {
+            if (v_target < V_GOAL) {
+              v_target += .224;
+              // recalculate N for the new distance and velocity
+              target_dist = distance(target_x, target_y, x_point, y_point);
+              N = target_dist / (0.02 * v_target/2.237);
+              x_len = target_x - x_point;
+            }
+
+            x_point += x_len/N;
+            y_point = s(x_point);
+
             // Convert / rotate the interpolated points back to global coordinates
             vector<double> xy_points_in_global_coord = carToGlobalCoord(pos_angle, x_point, y_point);
             next_x_vals.push_back(pos_x + xy_points_in_global_coord[0]);
             next_y_vals.push_back(pos_y + xy_points_in_global_coord[1]);
-          }
-
+          }         
 
           // Pass the path's x and y points to the json object
           // so that they can be sent to the simulator
