@@ -161,6 +161,30 @@ int main() {
             pos_d = pos_frenet[1];
           }
 
+          // check if the car will collide with another car
+          int blocked_lanes[] = {0, 0, 0};
+          int current_lane = getLane(pos_d);
+          double front_car_speed_mph;
+          for (int i = 0; i < sensor_fusion.size(); ++i) {
+            auto other_car = sensor_fusion[i];
+            double other_car_x = other_car[1];
+            double other_car_y = other_car[2];
+            double other_car_vx = other_car[3];
+            double other_car_vy = other_car[4];
+            double other_car_s = other_car[5];
+            double other_car_d = other_car[6];
+
+            double other_car_speed_in_m_per_s = sqrt(other_car_vx*other_car_vx + other_car_vy*other_car_vy);
+            other_car_s += other_car_speed_in_m_per_s * 0.02 * (double)path_size;
+            if ((other_car_s > pos_s)  && ((other_car_s - pos_s) < 30.0)) {
+              int blocked_lane = getLane(other_car_d);
+              blocked_lanes[blocked_lane] = 1;
+              if (blocked_lane == current_lane) {
+                front_car_speed_mph = other_car_speed_in_m_per_s * 2.237; // convert to mph
+              }
+            }
+          }
+
           // The spline should also include some future points.
           // Here, we use evenly spaced (30m apart) points along the road
           for (int i = 1; i < 4; ++i) {
@@ -205,7 +229,13 @@ int main() {
           double x_point = 0.0;
           double y_point = 0.0;
           for (int i = 1; i <= 50-path_size; ++i) {
-            if (v_target < V_GOAL) {
+            if (blocked_lanes[current_lane] == 1 && v_target > front_car_speed_mph) {
+              v_target -= .224;
+              // recalculate N for the new distance and velocity
+              target_dist = distance(target_x, target_y, x_point, y_point);
+              N = target_dist / (0.02 * v_target/2.237);
+              x_len = target_x - x_point;
+            } else if (v_target < V_GOAL) {
               v_target += .224;
               // recalculate N for the new distance and velocity
               target_dist = distance(target_x, target_y, x_point, y_point);
@@ -220,7 +250,7 @@ int main() {
             vector<double> xy_points_in_global_coord = carToGlobalCoord(pos_angle, x_point, y_point);
             next_x_vals.push_back(pos_x + xy_points_in_global_coord[0]);
             next_y_vals.push_back(pos_y + xy_points_in_global_coord[1]);
-          }         
+          }       
 
           // Pass the path's x and y points to the json object
           // so that they can be sent to the simulator
