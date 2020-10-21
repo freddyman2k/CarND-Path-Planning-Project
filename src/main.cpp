@@ -176,7 +176,7 @@ int main() {
 
             double other_car_speed_in_m_per_s = sqrt(other_car_vx*other_car_vx + other_car_vy*other_car_vy);
             other_car_s += other_car_speed_in_m_per_s * 0.02 * (double)path_size;
-            if ((other_car_s > pos_s)  && ((other_car_s - pos_s) < 30.0)) {
+            if ((other_car_s > pos_s - 10.0)  && (abs(other_car_s - pos_s) < 30.0)) {
               int blocked_lane = getLane(other_car_d);
               blocked_lanes[blocked_lane] = 1;
               if (blocked_lane == current_lane) {
@@ -185,10 +185,40 @@ int main() {
             }
           }
 
+          int prev_lane = lane;
+          bool lane_change = false;
+          if (blocked_lanes[current_lane] == 1) {
+            // Can only collide if the other car is driving in the same lane
+            // Either change lanes or adapt speed
+            vector<int> neighbor_lanes = getNextLanes(current_lane);
+            for (int i = 0; i < neighbor_lanes.size(); ++i) {
+              int next_lane = neighbor_lanes[i];
+              if (blocked_lanes[next_lane] == 0) {
+                lane_change = true;
+                lane = next_lane;
+
+                // Break loop, otherwise there could be multiple lane changes
+                break;
+              }
+            }
+          }
+
           // The spline should also include some future points.
           // Here, we use evenly spaced (30m apart) points along the road
-          for (int i = 1; i < 4; ++i) {
-            vector<double> waypoint_pos_xy = getXY(car_s + 30.0*i, (2 + 4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+          // Add an additional midpoint to the spline if the car is supposed 
+          // to change lanes, this will create a smoother trajectory
+          if (lane_change) {
+            double d_mid_lane_change = 2 + 4 * (lane - 0.5 * (lane - prev_lane));
+            vector<double> waypoint_pos_xy = getXY((pos_s + 30.0), d_mid_lane_change, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            spline_points_x.push_back(waypoint_pos_xy[0]);
+            spline_points_y.push_back(waypoint_pos_xy[1]);
+          } else {
+            vector<double> waypoint_pos_xy = getXY((pos_s + 30.0), (2 + 4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            spline_points_x.push_back(waypoint_pos_xy[0]);
+            spline_points_y.push_back(waypoint_pos_xy[1]);
+          }
+          for (int i = 2; i < 4; ++i) {
+            vector<double> waypoint_pos_xy = getXY((pos_s + 30.0*i), (2 + 4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
             spline_points_x.push_back(waypoint_pos_xy[0]);
             spline_points_y.push_back(waypoint_pos_xy[1]);
           }
@@ -229,15 +259,17 @@ int main() {
           double x_point = 0.0;
           double y_point = 0.0;
           for (int i = 1; i <= 50-path_size; ++i) {
-            if (blocked_lanes[current_lane] == 1 && v_target > front_car_speed_mph) {
+            if (blocked_lanes[current_lane] == 1 && !lane_change && v_target > front_car_speed_mph) {
+              // Decelerate to the speed of the car in front if all lanes are blocked
               v_target -= .224;
-              // recalculate N for the new distance and velocity
+              // Recalculate N for the new distance and velocity
               target_dist = distance(target_x, target_y, x_point, y_point);
               N = target_dist / (0.02 * v_target/2.237);
               x_len = target_x - x_point;
             } else if (v_target < V_GOAL) {
+              // Accelerate to drive at the speed limit
               v_target += .224;
-              // recalculate N for the new distance and velocity
+              // Recalculate N for the new distance and velocity
               target_dist = distance(target_x, target_y, x_point, y_point);
               N = target_dist / (0.02 * v_target/2.237);
               x_len = target_x - x_point;
@@ -250,7 +282,7 @@ int main() {
             vector<double> xy_points_in_global_coord = carToGlobalCoord(pos_angle, x_point, y_point);
             next_x_vals.push_back(pos_x + xy_points_in_global_coord[0]);
             next_y_vals.push_back(pos_y + xy_points_in_global_coord[1]);
-          }       
+          }     
 
           // Pass the path's x and y points to the json object
           // so that they can be sent to the simulator

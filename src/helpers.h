@@ -4,10 +4,15 @@
 #include <math.h>
 #include <string>
 #include <vector>
+#include "Eigen-3.3/Eigen/Dense"
+
+#define NUM_LANES 3
 
 // for convenience
 using std::string;
 using std::vector;
+using Eigen::MatrixXd;
+using Eigen::VectorXd;
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -175,6 +180,92 @@ vector<double> carToGlobalCoord(double angle_ref, double x_car, double y_car) {
   double y_global = (x_car*sin(angle_ref) + y_car*cos(angle_ref));
 
   return {x_global, y_global};
+}
+
+// get the lane id from the (Frenet coordinate) d value
+int getLane(double d) {
+  if (d >= 0.0 && d <= 4.0) {
+    return 0;
+  } else if (d > 4.0 && d <= 8.0) {
+    return 1;
+  } else if (d > 8.0 && d <= 12.0) {
+    return 2;
+  } else return -1;
+}
+
+// get the neighboring lane ids
+vector<int> getNextLanes(int lane) {
+  vector<int> neighbor_lanes;
+  if (lane >= 1) {
+    neighbor_lanes.push_back(lane-1);
+  }
+  if (lane <= NUM_LANES - 2) {
+    neighbor_lanes.push_back(lane+1);
+  }
+  return neighbor_lanes;
+}
+
+vector<double> JMT(vector<double> &start, vector<double> &end, double T) {
+  /**
+   * Calculate the Jerk Minimizing Trajectory that connects the initial state
+   * to the final state in time T.
+   *
+   * @param start - the vehicles start location given as a length three array
+   *   corresponding to initial values of [s, s_dot, s_double_dot]
+   * @param end - the desired end state for vehicle. Like "start" this is a
+   *   length three array.
+   * @param T - The duration, in seconds, over which this maneuver should occur.
+   *
+   * @output an array of length 6, each value corresponding to a coefficent in 
+   *   the polynomial:
+   *   s(t) = a_0 + a_1 * t + a_2 * t**2 + a_3 * t**3 + a_4 * t**4 + a_5 * t**5
+   *
+   * EXAMPLE
+   *   > JMT([0, 10, 0], [10, 10, 0], 1)
+   *     [0.0, 10.0, 0.0, 0.0, 0.0, 0.0]
+   */
+   
+   double si            = start[0];
+   double si_dot        = start[1];
+   double si_double_dot = start[2];
+   double sf            = end[0];
+   double sf_dot        = end[1];
+   double sf_double_dot = end[2];
+   
+   MatrixXd A = MatrixXd(3,3);
+   MatrixXd B = MatrixXd(3,1);
+   // pre-compute terms
+   double T2 = T * T;
+   double T3 = T2 * T;
+   double T4 = T3 * T;
+   double T5 = T4 * T;
+   
+   // define matrices
+   A <<     T3,    T4,    T5,
+          3*T2,  4*T3,  5*T4,
+           6*T, 12*T2, 20*T3;
+           
+   B << sf - (si + si_dot * T + 0.5 * si_double_dot * T2),
+                    sf_dot - (si_dot + si_double_dot * T),
+                            sf_double_dot - si_double_dot;
+   
+   // calculate coefficients (alphas) 3 to 5   
+   VectorXd C = A.inverse() * B;
+
+   return {si, si_dot, 0.5 * si_double_dot, C.data()[0], C.data()[1], C.data()[2]};
+}
+
+// calculate the values of a quintic polynomial
+// (y(t) = a_0 + a_1 * t + a_2 * t**2 + a_3 * t**3 + a_4 * t**4 + a_5 * t**5) 
+// given by the 6 coefficients in the vector a
+// usually used on the output of JMT()
+double quintic_polynomial(vector<double> a, double t) {
+  double result = a[0];
+  for (int i = 1; i < 6; ++i) {
+    result += a[i];
+    t *= t;
+  }
+  return result;
 }
 
 #endif  // HELPERS_H
